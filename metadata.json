@@ -1,0 +1,6 @@
+{
+  "name": "شبیه‌ساز شبکه عصبی ترنسفورمر",
+  "description": "شبیه‌سازی سه‌بعدی پردازش زبان و پیش‌بینی توکن در ترنسفورمر با ردیابی دوربین و رابط کاربری بهینه‌شده برای موبایل",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

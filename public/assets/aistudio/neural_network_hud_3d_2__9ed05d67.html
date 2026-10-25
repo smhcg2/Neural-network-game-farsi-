@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>شبیه‌ساز شبکه عصبی پردازش زبان HUD | 3D Neural Token Predictor</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Fonts: Vazirmatn & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Vazirmatn:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+
+    <!-- Three.js & Post-Processing Dependencies -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <style>
+        body {
+            font-family: 'Vazirmatn', sans-serif;
+            background-color: #030712;
+            color: #f3f4f6;
+            overflow: hidden;
+            user-select: none;
+        }
+        .mono-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        /* Futuristic Glassmorphism HUD Style */
+        .hud-panel {
+            background: rgba(8, 14, 26, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(0, 243, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.6), inset 0 0 15px rgba(0, 243, 255, 0.05);
+        }
+        .hud-border-cyan { border-color: rgba(0, 243, 255, 0.4); }
+        .hud-glow-text {
+            text-shadow: 0 0 10px rgba(0, 243, 255, 0.6), 0 0 20px rgba(0, 243, 255, 0.3);
+        }
+        /* Custom UI Scrollbar */
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.3); }
+        ::-webkit-scrollbar-thumb { background: rgba(0, 243, 255, 0.4); border-radius: 2px; }
+        
+        /* Sci-Fi HUD Corner Brackets */
+        .hud-corner-tl { position: absolute; top: -1px; left: -1px; width: 10px; height: 10px; border-top: 2px solid #00f3ff; border-left: 2px solid #00f3ff; }
+        .hud-corner-tr { position: absolute; top: -1px; right: -1px; width: 10px; height: 10px; border-top: 2px solid #00f3ff; border-right: 2px solid #00f3ff; }
+        .hud-corner-bl { position: absolute; bottom: -1px; left: -1px; width: 10px; height: 10px; border-bottom: 2px solid #00f3ff; border-left: 2px solid #00f3ff; }
+        .hud-corner-br { position: absolute; bottom: -1px; right: -1px; width: 10px; height: 10px; border-bottom: 2px solid #00f3ff; border-right: 2px solid #00f3ff; }
+
+        /* Scanning grid line effect */
+        .scanline {
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(0,243,255,0.03) 50%, rgba(255,255,255,0));
+            background-size: 100% 8px;
+        }
+    </style>
+</head>
+<body class="w-screen h-screen relative bg-black overflow-hidden select-none">
+
+    <!-- 3D Canvas Container -->
+    <div id="canvas-container" class="absolute inset-0 w-full h-full z-0 cursor-grab active:cursor-grabbing"></div>
+
+    <!-- Scanning Overlay Pattern -->
+    <div class="pointer-events-none absolute inset-0 scanline z-10 opacity-60"></div>
+
+    <!-- Top Left HUD Header -->
+    <div class="absolute top-4 right-4 z-20 flex flex-col gap-2">
+        <div class="hud-panel p-4 rounded-lg relative min-w-[300px]">
+            <div class="hud-corner-tl"></div><div class="hud-corner-tr"></div>
+            <div class="hud-corner-bl"></div><div class="hud-corner-br"></div>
+            
+            <div class="flex items-center justify-between border-b border-cyan-500/30 pb-2 mb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+                    <h1 class="text-lg font-bold tracking-wide text-cyan-400 hud-glow-text">شبیه‌ساز شبکه عصبی ترنسفورمر</h1>
+                </div>
+                <span id="fps-counter" class="mono-font text-xs text-cyan-300/70">60 FPS</span>
+            </div>
+
+            <!-- Sentence Preset Dropdown Selector -->
+            <div class="space-y-1">
+                <label class="text-xs text-gray-300 font-semibold block">انتخاب جمله (Token Stream):</label>
+                <select id="sentence-select" class="w-full bg-slate-900/90 text-cyan-300 border border-cyan-500/40 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-cyan-400 transition cursor-pointer">
+                    <!-- Sentences populated via JS -->
+                </select>
+            </div>
+
+            <!-- Active Output Banner -->
+            <div class="mt-3 bg-slate-950/80 p-2.5 rounded border border-cyan-500/20">
+                <div class="text-[10px] text-cyan-400/70 mono-font mb-1 uppercase tracking-wider">TARGET SENTENCE PATH:</div>
+                <div id="target-sentence-text" class="text-xs text-white font-medium leading-relaxed">---</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Center Interactive Controls Dashboard -->
+    <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 w-11/12 max-w-2xl">
+        <div class="hud-panel p-4 rounded-xl relative flex flex-col md:flex-row items-center justify-between gap-4">
+            <div class="hud-corner-tl"></div><div class="hud-corner-tr"></div>
+            <div class="hud-corner-bl"></div><div class="hud-corner-br"></div>
+
+            <!-- Sentence Playback Buttons -->
+            <div class="flex items-center gap-2 w-full md:w-auto justify-center">
+                <button id="btn-prev" class="px-3 py-1.5 bg-cyan-950/60 hover:bg-cyan-900/80 text-cyan-300 border border-cyan-500/40 rounded text-xs font-semibold transition active:scale-95 flex items-center gap-1">
+                    ◀ کلمه قبل
+                </button>
+                <button id="btn-play" class="px-5 py-1.5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold rounded text-xs transition shadow-lg shadow-cyan-500/30 active:scale-95 flex items-center gap-1">
+                    <span id="play-icon">▶</span> <span id="play-text">پخش پردازش</span>
+                </button>
+                <button id="btn-next" class="px-3 py-1.5 bg-cyan-950/60 hover:bg-cyan-900/80 text-cyan-300 border border-cyan-500/40 rounded text-xs font-semibold transition active:scale-95 flex items-center gap-1">
+                    کلمه بعد ▶
+                </button>
+                <button id="btn-reset" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-gray-300 rounded text-xs transition" title="بازنشانی">
+                    🔄
+                </button>
+            </div>
+
+            <!-- Interactive Sliders -->
+            <div class="flex items-center gap-4 w-full md:w-auto justify-around border-t md:border-t-0 md:border-r border-cyan-500/20 pt-2 md:pt-0 md:pr-4">
+                <!-- Speed Slider -->
+                <div class="flex flex-col items-center gap-1">
+                    <span class="text-[10px] text-cyan-300/80">سرعت تولید</span>
+                    <input id="speed-slider" type="range" min="0.5" max="3" step="0.1" value="1" class="w-20 accent-cyan-400 cursor-pointer">
+                </div>
+                <!-- Noise Distortion Slider -->
+                <div class="flex flex-col items-center gap-1">
+                    <span class="text-[10px] text-cyan-300/80">شدت نویز 3D</span>
+                    <input id="noise-slider" type="range" min="0" max="2" step="0.1" value="0.5" class="w-20 accent-cyan-400 cursor-pointer">
+                </div>
+                <!-- Color Theme Picker -->
+                <div class="flex flex-col items-center gap-1">
+                    <span class="text-[10px] text-cyan-300/80">تم HUD</span>
+                    <div class="flex items-center gap-1">
+                        <button class="theme-btn w-4 h-4 rounded-full bg-cyan-400 border border-white" data-color="0x00f3ff"></button>
+                        <button class="theme-btn w-4 h-4 rounded-full bg-emerald-400 border border-transparent" data-color="0x10b981"></button>
+                        <button class="theme-btn w-4 h-4 rounded-full bg-amber-400 border border-transparent" data-color="0xf59e0b"></button>
+                        <button class="theme-btn w-4 h-4 rounded-full bg-fuchsia-400 border border-transparent" data-color="0xe0e7ff"></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Left HUD Stats Overlay -->
+    <div class="absolute top-4 left-4 z-20 hidden md:flex flex-col gap-2">
+        <div class="hud-panel p-3 rounded-lg relative w-56 text-xs font-mono space-y-1.5">
+            <div class="hud-corner-tl"></div><div class="hud-corner-tr"></div>
+            <div class="hud-corner-bl"></div><div class="hud-corner-br"></div>
+            <div class="text-cyan-400 font-bold border-b border-cyan-500/20 pb-1 flex justify-between">
+                <span>MODEL TELEMETRY</span>
+                <span class="animate-pulse">REC</span>
+            </div>
+            <div class="flex justify-between text-gray-300">
+                <span>LAYERS (لایه‌ها):</span>
+                <span id="stat-layers" class="text-cyan-300">8</span>
+            </div>
+            <div class="flex justify-between text-gray-300">
+                <span>ACTIVE TOKEN:</span>
+                <span id="stat-step" class="text-cyan-300">0 / 0</span>
+            </div>
+            <div class="flex justify-between text-gray-300">
+                <span>VOCAB SIZE:</span>
+                <span class="text-cyan-300">50,257</span>
+            </div>
+            <div class="flex justify-between text-gray-300">
+                <span>ATTENTION HEADS:</span>
+                <span class="text-cyan-300">12</span>
+            </div>
+            <div class="flex justify-between text-gray-300">
+                <span>NOISE FIELD:</span>
+                <span id="stat-noise-val" class="text-cyan-300">0.5</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Node Hover/Selection Tooltip Popup -->
+    <div id="node-tooltip" class="absolute hidden z-30 pointer-events-none hud-panel p-3 rounded-md text-xs w-52 transform -translate-x-1/2 -translate-y-full transition-opacity duration-150">
+        <div class="hud-corner-tl"></div><div class="hud-corner-tr"></div>
+        <div class="hud-corner-bl"></div><div class="hud-corner-br"></div>
+        <div id="tooltip-title" class="font-bold text-cyan-300 text-sm mb-1">کلمه</div>
+        <div class="text-[11px] text-gray-300 space-y-0.5">
+            <div>لایه (Layer): <span id="tooltip-layer" class="text-white font-mono">0</span></div>
+            <div>شناسه توکن (Token ID): <span id="tooltip-id" class="text-white font-mono">#0</span></div>
+            <div>احتمال بهینگی (Probability): <span id="tooltip-prob" class="text-emerald-400 font-mono font-bold">98.4%</span></div>
+        </div>
+        <!-- Activation Meter Bar -->
+        <div class="mt-2 w-full bg-slate-900 h-1.5 rounded-full overflow-hidden border border-cyan-500/30">
+            <div id="tooltip-bar" class="bg-cyan-400 h-full w-3/4 transition-all duration-300"></div>
+        </div>
+    </div>
+
+    <!-- Application Script -->
+    <script>
+        // 10 Preset Farsi Sentences for Language Transformer Modeling
+        const PRESET_SENTENCES = [
+            "شبکه های عصبی عمیق الگوی یادگیری مغز انسان را شبیه سازی میکنند",
+            "هوش مصنوعی آینده پردازش اطلاعات و تحلیل داده را تغییر میدهد",
+            "مدل های زبانی بزرگ توانایی درک و تولید زبان طبیعی را دارند",
+            "الگوریتم یادگیری ماشین از تجربه ها برای پیش بینی استفاده میکند",
+            "بینایی ماشین به کامپیوترها قدرت درک تصاویر و ویدیوها را ببخشد",
+            "پردازش موازی در پردازنده های گرافیکی سرعت آموزش مدل را افزایش میدهد",
+            "تابع فعال سازی غیرخطی بودن را به شبکه عصبی اضافه میکند",
+            "استخراج ویژگی خودکار یکی از مزایای اصلی یادگیری عمیق است",
+            "معماری ترنسفورمر انقلاب عظیمی در هوش مصنوعی ایجاد کرد",
+            "توسعه اخلاقی هوش مصنوعی امنیت و پایداری جامعه را تضمین میکند"
+        ];
+
+        // Vocabulary Distractors for populating alternative nodes in vocabulary space
+        const DISTRACTOR_WORDS = [
+            "سیستم", "پردازش", "الگوریتم", "بردار", "ماتریس", "امبدینگ", "تانسور",
+            "داده", "آموزش", "تست", "بهینه‌سازی", "افت", "وزن", "بایاس", "گرادیان",
+            "توکن", "پسیان", "توجه", "خودکار", "حافظه", "سیگنال", "کاهش", "پیش‌بینی"
+        ];
+
+        // Application State
+        let currentSentenceIdx = 0;
+        let activeTokens = [];
+        let currentStepIndex = 0;
+        let isPlaying = false;
+        let playbackTimer = null;
+        let playbackSpeed = 1.0;
+        let noiseIntensity = 0.5;
+        let themeColorHex = 0x00f3ff;
+
+        // Three.js Scene Variables
+        let scene, camera, renderer, composer, controls;
+        let networkGroup, nodesGroup, linksGroup, labelsGroup, pulseGroup, particlesGroup;
+        let layersData = []; // Array of layer node arrays
+        let targetPathNodes = []; // Nodes that form the active sentence sequence
+        let raycaster, mouse;
+        let hoverNode = null;
+
+        // Color Palette Configuration
+        let activeTheme = {
+            primary: new THREE.Color(0x00f3ff),
+            secondary: new THREE.Color(0x00a8ff),
+            activeNode: new THREE.Color(0x00ffcc),
+            inactiveNode: new THREE.Color(0x1a2b4c),
+            activeLine: new THREE.Color(0x00f3ff),
+            inactiveLine: new THREE.Color(0x0a192f)
+        };
+
+        // Initialize Application
+        window.addEventListener('load', () => {
+            initUI();
+            initThreeJS();
+            loadSentence(0);
+            animate();
+        });
+
+        // Setup UI Dropdowns & Controls
+        function initUI() {
+            const selectEl = document.getElementById('sentence-select');
+            PRESET_SENTENCES.forEach((sent, idx) => {
+                const opt = document.createElement('option');
+                opt.value = idx;
+                opt.innerText = `${idx + 1}. ${sent}`;
+                selectEl.appendChild(opt);
+            });
+
+            selectEl.addEventListener('change', (e) => {
+                loadSentence(parseInt(e.target.value));
+            });
+
+            document.getElementById('btn-play').addEventListener('click', togglePlayback);
+            document.getElementById('btn-next').addEventListener('click', stepNext);
+            document.getElementById('btn-prev').addEventListener('click', stepPrev);
+            document.getElementById('btn-reset').addEventListener('click', () => {
+                stopPlayback();
+                setCurrentStep(0);
+            });
+
+            document.getElementById('speed-slider').addEventListener('input', (e) => {
+                playbackSpeed = parseFloat(e.target.value);
+                if (isPlaying) {
+                    restartPlaybackInterval();
+                }
+            });
+
+            document.getElementById('noise-slider').addEventListener('input', (e) => {
+                noiseIntensity = parseFloat(e.target.value);
+                document.getElementById('stat-noise-val').innerText = noiseIntensity.toFixed(1);
+            });
+
+            // Theme Buttons
+            document.querySelectorAll('.theme-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    document.querySelectorAll('.theme-btn').forEach(b => b.classList.replace('border-white', 'border-transparent'));
+                    e.target.classList.replace('border-transparent', 'border-white');
+                    const colorHex = parseInt(e.target.dataset.color);
+                    updateThemeColor(colorHex);
+                });
+            });
+        }
+
+        // Initialize Three.js Scene, Camera, Renderers & Bloom
+        function initThreeJS() {
+            const container = document.getElementById('canvas-container');
+            
+            // Scene
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x030712, 0.008);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 15, 65);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ReinhardToneMapping;
+            container.appendChild(renderer.domElement);
+
+            // Orbit Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.maxDistance = 150;
+            controls.minDistance = 20;
+
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+
+            const pointLight = new THREE.PointLight(0x00f3ff, 2, 100);
+            pointLight.position.set(0, 20, 20);
+            scene.add(pointLight);
+
+            // Post Processing Bloom
+            const renderPass = new THREE.RenderPass(scene, camera);
+            const bloomPass = new THREE.UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                1.3, // Strength
+                0.4, // Radius
+                0.85 // Threshold
+            );
+
+            composer = new THREE.EffectComposer(renderer);
+            composer.addPass(renderPass);
+            composer.addPass(bloomPass);
+
+            // Scene Groups
+            networkGroup = new THREE.Group();
+            nodesGroup = new THREE.Group();
+            linksGroup = new THREE.Group();
+            labelsGroup = new THREE.Group();
+            pulseGroup = new THREE.Group();
+            particlesGroup = new THREE.Group();
+
+            networkGroup.add(linksGroup);
+            networkGroup.add(nodesGroup);
+            networkGroup.add(labelsGroup);
+            networkGroup.add(pulseGroup);
+            scene.add(networkGroup);
+            scene.add(particlesGroup);
+
+            // Create Star Field Background Particles
+            createBackgroundParticles();
+
+            // Raycaster for Hover Interaction
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('mousemove', onMouseMove);
+        }
+
+        // Create Starfield Background Particles
+        function createBackgroundParticles() {
+            const count = 600;
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+
+            for (let i = 0; i < count * 3; i += 3) {
+                positions[i] = (Math.random() - 0.5) * 200;
+                positions[i + 1] = (Math.random() - 0.5) * 200;
+                positions[i + 2] = (Math.random() - 0.5) * 200;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const material = new THREE.PointsMaterial({
+                color: 0x00f3ff,
+                size: 0.8,
+                transparent: true,
+                opacity: 0.4
+            });
+
+            const points = new THREE.Points(geometry, material);
+            particlesGroup.add(points);
+        }
+
+        // Helper: Create 3D Canvas Text Sprite Label
+        function createTextSprite(text, isTarget = false) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 256;
+            canvas.height = 64;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Background Pill Badge
+            ctx.fillStyle = isTarget ? 'rgba(0, 243, 255, 0.25)' : 'rgba(15, 23, 42, 0.75)';
+            ctx.strokeStyle = isTarget ? '#00f3ff' : 'rgba(0, 243, 255, 0.3)';
+            ctx.lineWidth = isTarget ? 3 : 1;
+
+            const x = 10, y = 10, w = canvas.width - 20, h = canvas.height - 20, r = 10;
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.arcTo(x + w, y, x + w, y + h, r);
+            ctx.arcTo(x + w, y + h, x, y + h, r);
+            ctx.arcTo(x, y + h, x, y, r);
+            ctx.arcTo(x, y, x + w, y, r);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Word Text
+            ctx.font = isTarget ? 'bold 22px "Vazirmatn", sans-serif' : '18px "Vazirmatn", sans-serif';
+            ctx.fillStyle = isTarget ? '#ffffff' : '#9ca3af';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMaterial = new THREE.SpriteMaterial({
+                map: texture,
+                transparent: true,
+                depthTest: false
+            });
+
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.scale.set(7, 1.75, 1);
+            return sprite;
+        }
+
+        // Load and Reconstruct 3D Network Architecture for Selected Sentence
+        function loadSentence(sentenceIndex) {
+            stopPlayback();
+            currentSentenceIdx = sentenceIndex;
+            const fullText = PRESET_SENTENCES[sentenceIndex];
+            activeTokens = fullText.split(' ');
+
+            document.getElementById('target-sentence-text').innerText = fullText;
+            document.getElementById('stat-layers').innerText = activeTokens.length;
+
+            // Clear Old Scene Objects
+            while(nodesGroup.children.length > 0) {
+                const obj = nodesGroup.children[0];
+                nodesGroup.remove(obj);
+            }
+            while(linksGroup.children.length > 0) {
+                linksGroup.remove(linksGroup.children[0]);
+            }
+            while(labelsGroup.children.length > 0) {
+                labelsGroup.remove(labelsGroup.children[0]);
+            }
+            while(pulseGroup.children.length > 0) {
+                pulseGroup.remove(pulseGroup.children[0]);
+            }
+
+            layersData = [];
+            targetPathNodes = [];
+
+            const numLayers = activeTokens.length;
+            const layerSpacing = 12;
+            const startX = -((numLayers - 1) * layerSpacing) / 2;
+
+            const sphereGeo = new THREE.SphereGeometry(0.8, 16, 16);
+
+            // Generate Network Nodes across Layers
+            for (let l = 0; l < numLayers; l++) {
+                const layerNodes = [];
+                const nodesInLayer = 4; // 1 Correct Token + 3 Distractors
+                const correctWord = activeTokens[l];
+                const targetNodeIdx = Math.floor(Math.random() * nodesInLayer);
+
+                for (let n = 0; n < nodesInLayer; n++) {
+                    const isTarget = (n === targetNodeIdx);
+                    const word = isTarget ? correctWord : DISTRACTOR_WORDS[(l * 3 + n) % DISTRACTOR_WORDS.length];
+
+                    // Node Sphere Mesh
+                    const mat = new THREE.MeshStandardMaterial({
+                        color: isTarget ? activeTheme.secondary : activeTheme.inactiveNode,
+                        emissive: isTarget ? activeTheme.primary : 0x051020,
+                        emissiveIntensity: isTarget ? 0.6 : 0.1,
+                        roughness: 0.2,
+                        metalness: 0.8
+                    });
+
+                    const nodeMesh = new THREE.Mesh(sphereGeo, mat);
+                    
+                    // Position calculations
+                    const posY = (n - (nodesInLayer - 1) / 2) * 6;
+                    const posZ = (Math.random() - 0.5) * 4;
+                    const posX = startX + (l * layerSpacing);
+
+                    nodeMesh.position.set(posX, posY, posZ);
+
+                    // Node Metadata
+                    const nodeData = {
+                        mesh: nodeMesh,
+                        layer: l,
+                        nodeIndex: n,
+                        word: word,
+                        isTarget: isTarget,
+                        tokenId: Math.floor(Math.random() * 40000) + 10000,
+                        basePos: new THREE.Vector3(posX, posY, posZ),
+                        probability: isTarget ? (0.85 + Math.random() * 0.14) : (Math.random() * 0.2)
+                    };
+
+                    nodeMesh.userData = nodeData;
+                    nodesGroup.add(nodeMesh);
+                    layerNodes.push(nodeData);
+
+                    if (isTarget) {
+                        targetPathNodes.push(nodeData);
+                    }
+
+                    // Floating 3D Text Label
+                    const labelSprite = createTextSprite(word, isTarget);
+                    labelSprite.position.set(posX, posY + 1.8, posZ);
+                    nodeData.labelSprite = labelSprite;
+                    labelsGroup.add(labelSprite);
+                }
+                layersData.push(layerNodes);
+            }
+
+            // Draw Connections / Synapses between Layers
+            const lineMatInactive = new THREE.LineBasicMaterial({
+                color: activeTheme.inactiveLine,
+                transparent: true,
+                opacity: 0.15
+            });
+
+            for (let l = 0; l < numLayers - 1; l++) {
+                const currentLayer = layersData[l];
+                const nextLayer = layersData[l + 1];
+
+                currentLayer.forEach(nodeA => {
+                    nextLayer.forEach(nodeB => {
+                        const geometry = new THREE.BufferGeometry().setFromPoints([
+                            nodeA.mesh.position,
+                            nodeB.mesh.position
+                        ]);
+                        
+                        const isTargetPath = nodeA.isTarget && nodeB.isTarget;
+                        let lineMaterial = lineMatInactive;
+
+                        if (isTargetPath) {
+                            lineMaterial = new THREE.LineBasicMaterial({
+                                color: activeTheme.activeLine,
+                                transparent: true,
+                                opacity: 0.8,
+                                linewidth: 2
+                            });
+                        }
+
+                        const line = new THREE.Line(geometry, lineMaterial);
+                        line.userData = { nodeA, nodeB, isTargetPath };
+                        linksGroup.add(line);
+                    });
+                });
+            }
+
+            setCurrentStep(0);
+        }
+
+        // Set Current Generation Step (0 to activeTokens.length - 1)
+        function setCurrentStep(step) {
+            currentStepIndex = Math.max(0, Math.min(step, activeTokens.length - 1));
+            document.getElementById('stat-step').innerText = `${currentStepIndex + 1} / ${activeTokens.length}`;
+
+            // Highlight Active Layer Nodes and Links
+            targetPathNodes.forEach((node, idx) => {
+                const isCurrent = (idx === currentStepIndex);
+                const isPassed = (idx <= currentStepIndex);
+
+                if (isCurrent) {
+                    node.mesh.material.emissive.setHex(0x00ffcc);
+                    node.mesh.material.emissiveIntensity = 1.0;
+                    node.mesh.scale.set(1.5, 1.5, 1.5);
+                } else if (isPassed) {
+                    node.mesh.material.emissive.setHex(activeTheme.primary.getHex());
+                    node.mesh.material.emissiveIntensity = 0.7;
+                    node.mesh.scale.set(1.2, 1.2, 1.2);
+                } else {
+                    node.mesh.material.emissive.setHex(0x051020);
+                    node.mesh.material.emissiveIntensity = 0.2;
+                    node.mesh.scale.set(1.0, 1.0, 1.0);
+                }
+            });
+
+            // Trigger Glowing Energy Pulse Along Path
+            if (currentStepIndex < targetPathNodes.length - 1) {
+                spawnPulse(targetPathNodes[currentStepIndex], targetPathNodes[currentStepIndex + 1]);
+            }
+        }
+
+        // Spawn Signal Pulse Traveling between Nodes
+        function spawnPulse(nodeA, nodeB) {
+            const pulseGeo = new THREE.SphereGeometry(0.4, 12, 12);
+            const pulseMat = new THREE.MeshBasicMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.9
+            });
+            const pulseMesh = new THREE.Mesh(pulseGeo, pulseMat);
+            pulseMesh.position.copy(nodeA.mesh.position);
+
+            pulseGroup.add(pulseMesh);
+
+            const startTime = Date.now();
+            const duration = 800 / playbackSpeed;
+
+            function animatePulse() {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1.0);
+
+                pulseMesh.position.lerpVectors(nodeA.mesh.position, nodeB.mesh.position, progress);
+
+                if (progress < 1.0) {
+                    requestAnimationFrame(animatePulse);
+                } else {
+                    pulseGroup.remove(pulseMesh);
+                }
+            }
+            animatePulse();
+        }
+
+        // Playback Controls
+        function togglePlayback() {
+            if (isPlaying) {
+                stopPlayback();
+            } else {
+                startPlayback();
+            }
+        }
+
+        function startPlayback() {
+            isPlaying = true;
+            document.getElementById('play-icon').innerText = '⏸';
+            document.getElementById('play-text').innerText = 'توقف';
+            restartPlaybackInterval();
+        }
+
+        function stopPlayback() {
+            isPlaying = false;
+            document.getElementById('play-icon').innerText = '▶';
+            document.getElementById('play-text').innerText = 'پخش پردازش';
+            if (playbackTimer) clearInterval(playbackTimer);
+        }
+
+        function restartPlaybackInterval() {
+            if (playbackTimer) clearInterval(playbackTimer);
+            playbackTimer = setInterval(() => {
+                if (currentStepIndex >= activeTokens.length - 1) {
+                    setCurrentStep(0);
+                } else {
+                    stepNext();
+                }
+            }, 1200 / playbackSpeed);
+        }
+
+        function stepNext() {
+            if (currentStepIndex < activeTokens.length - 1) {
+                setCurrentStep(currentStepIndex + 1);
+            }
+        }
+
+        function stepPrev() {
+            if (currentStepIndex > 0) {
+                setCurrentStep(currentStepIndex - 1);
+            }
+        }
+
+        // Update Theme Colors Dynamically
+        function updateThemeColor(colorHex) {
+            themeColorHex = colorHex;
+            activeTheme.primary.setHex(colorHex);
+            activeTheme.secondary.setHex(colorHex);
+            activeTheme.activeLine.setHex(colorHex);
+
+            loadSentence(currentSentenceIdx);
+        }
+
+        // Mouse Move for Node Hover Tooltip
+        function onMouseMove(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            const tooltip = document.getElementById('node-tooltip');
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(nodesGroup.children);
+
+            if (intersects.length > 0) {
+                const nodeData = intersects[0].object.userData;
+                hoverNode = nodeData;
+
+                document.getElementById('tooltip-title').innerText = `کلمه: "${nodeData.word}"`;
+                document.getElementById('tooltip-layer').innerText = nodeData.layer + 1;
+                document.getElementById('tooltip-id').innerText = `#${nodeData.tokenId}`;
+                const probPct = (nodeData.probability * 100).toFixed(1);
+                document.getElementById('tooltip-prob').innerText = `${probPct}%`;
+                document.getElementById('tooltip-bar').style.width = `${probPct}%`;
+
+                tooltip.style.left = `${event.clientX}px`;
+                tooltip.style.top = `${event.clientY - 15}px`;
+                tooltip.classList.remove('hidden');
+            } else {
+                hoverNode = null;
+                tooltip.classList.add('hidden');
+            }
+        }
+
+        // Window Resize
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Main Animation Loop
+        let frameCount = 0;
+        let lastTime = performance.now();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = Date.now() * 0.001;
+
+            // Compute FPS
+            frameCount++;
+            const currentTime = performance.now();
+            if (currentTime - lastTime >= 1000) {
+                document.getElementById('fps-counter').innerText = `${frameCount} FPS`;
+                frameCount = 0;
+                lastTime = currentTime;
+            }
+
+            // Apply Dynamic 3D Noise Drift to Nodes
+            nodesGroup.children.forEach(nodeMesh => {
+                const data = nodeMesh.userData;
+                if (data && data.basePos) {
+                    const noiseX = Math.sin(time * 1.5 + data.basePos.y) * 0.2 * noiseIntensity;
+                    const noiseY = Math.cos(time * 1.2 + data.basePos.x) * 0.2 * noiseIntensity;
+                    const noiseZ = Math.sin(time * 1.8 + data.basePos.z) * 0.2 * noiseIntensity;
+
+                    nodeMesh.position.set(
+                        data.basePos.x + noiseX,
+                        data.basePos.y + noiseY,
+                        data.basePos.z + noiseZ
+                    );
+
+                    if (data.labelSprite) {
+                        data.labelSprite.position.set(
+                            data.basePos.x + noiseX,
+                            data.basePos.y + noiseY + 1.8,
+                            data.basePos.z + noiseZ
+                        );
+                    }
+                }
+            });
+
+            // Update Connecting Lines
+            linksGroup.children.forEach(line => {
+                const { nodeA, nodeB } = line.userData;
+                const pos = line.geometry.attributes.position;
+                pos.setXYZ(0, nodeA.mesh.position.x, nodeA.mesh.position.y, nodeA.mesh.position.z);
+                pos.setXYZ(1, nodeB.mesh.position.x, nodeB.mesh.position.y, nodeB.mesh.position.z);
+                pos.needsUpdate = true;
+            });
+
+            // Rotate Particles Background slowly
+            particlesGroup.rotation.y = time * 0.02;
+
+            controls.update();
+            composer.render();
+        }
+    </script>
+</body>
+</html>
