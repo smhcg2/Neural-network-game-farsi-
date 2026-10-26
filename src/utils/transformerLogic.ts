@@ -26,9 +26,12 @@ export interface UserProfile {
   avatarId: string;
   scoreOutOf20: number; // 0 to 20
   completedStages: number[];
-  stageScores: Record<number, number>; // stageIndex -> score (0 to 2)
+  stageScores: Record<number, number>; // stageIndex -> score (0 to 1.0 each, total 10.0)
+  quizScores: Record<string, number>; // checkpoint -> score (2.5 each, 4 quizzes = 10.0)
   highestStreak: number;
   unlockedMedalIds: string[];
+  tutorialShownCount?: number;
+  tutorialDismissed?: boolean;
 }
 
 /**
@@ -74,34 +77,49 @@ export function calculateGameCameraTarget(
   lookAt: { x: number; y: number; z: number };
 } {
   if (isMobile) {
-    // Mobile portrait: Camera sits directly in front of active layer at z: 32.0 (plenty of breathing room)
+    // Mobile portrait: Camera sits directly in front of active layer at z: 38.0,
+    // with elevated Y target (2.4) so options are projected safely below the top floating HUD!
     return {
       position: {
         x: layerX,
-        y: 0.2,
-        z: 32.0,
+        y: 2.4,
+        z: 38.0,
       },
       lookAt: {
         x: layerX,
-        y: 0.0,
+        y: 2.4,
         z: 0.0,
       },
     };
   } else {
-    // Desktop: Comfortable distance looking slightly down the pipeline
+    // Desktop: Comfortable distance looking slightly down the pipeline with safe clearance
     return {
       position: {
         x: layerX - 4.0,
-        y: 1.5,
-        z: 25.0,
+        y: 2.0,
+        z: 28.0,
       },
       lookAt: {
         x: layerX + 2.0,
-        y: 0.2,
+        y: 1.5,
         z: 0.0,
       },
     };
   }
+}
+
+/**
+ * Dynamic difficulty scaling:
+ * - Stage 1 & 2 (index 0, 1): 2 options (1 correct + 1 distractor) - simple & clear for beginner learning
+ * - Stage 3 & 4 (index 2, 3): 3 options (1 correct + 2 distractors)
+ * - Stage 5 to 7 (index 4, 5, 6): 4 options (1 correct + 3 distractors)
+ * - Stage 8 to 10 (index 7, 8, 9): 5 options (1 correct + 4 distractors) - high cognitive challenge
+ */
+export function getNodeCountForStage(sentenceIndex: number): number {
+  if (sentenceIndex <= 1) return 2;
+  if (sentenceIndex <= 3) return 3;
+  if (sentenceIndex <= 6) return 4;
+  return 5;
 }
 
 /**
@@ -117,7 +135,6 @@ export function generateLayerGraph(
   const numLayers = tokens.length;
   const layerSpacing = 12;
   const startX = -((numLayers - 1) * layerSpacing) / 2;
-  const nodesPerLayer = 4;
 
   const layers: NetworkNodeData[][] = [];
   const targetPath: NetworkNodeData[] = [];
@@ -126,10 +143,14 @@ export function generateLayerGraph(
     const layerNodes: NetworkNodeData[] = [];
     const correctWord = tokens[l];
     const isFirstLayer = l === 0;
-    const nodesCount = isFirstLayer ? 1 : 4;
+    const stageNodeCount = getNodeCountForStage(sentenceIndex);
+    const nodesCount = isFirstLayer ? 1 : stageNodeCount;
 
-    // For layer 0: single prompt neuron at center. For layer > 0: 4 choices with 1 target.
+    // For layer 0: single prompt neuron at center. For layer > 0: choices with 1 target.
     const targetNodeIdx = isFirstLayer ? 0 : Math.floor(rand() * nodesCount);
+
+    // Spacing: compact vertical spread so options comfortably fit between top HUD and bottom dock
+    const verticalSpread = nodesCount >= 5 ? 3.0 : nodesCount >= 4 ? 3.4 : 3.8;
 
     for (let n = 0; n < nodesCount; n++) {
       const isTarget = isFirstLayer ? true : n === targetNodeIdx;
@@ -138,15 +159,19 @@ export function generateLayerGraph(
         : distractorWords[(l * 5 + n + sentenceIndex) % distractorWords.length];
 
       const posX = startX + l * layerSpacing;
-      // If single node, center at Y=0. Otherwise spread vertically: +4.6, +1.5, -1.5, -4.6
-      const posY = isFirstLayer ? 0 : (n - (nodesCount - 1) / 2) * 4.6;
+      // If single node, center at Y=0. Otherwise spread vertically
+      const posY = isFirstLayer ? 0 : (n - (nodesCount - 1) / 2) * verticalSpread;
       const posZ = isFirstLayer ? 0 : (rand() - 0.5) * 1.5;
 
+      // Realistic Softmax probability distribution:
+      // When 2 nodes: target ~85-95%, distractor ~5-15%
+      // When 5 nodes: target ~55-70%, distractors ~5-15%
+      const baseTargetProb = nodesCount === 2 ? 0.88 : nodesCount === 3 ? 0.78 : nodesCount === 4 ? 0.70 : 0.60;
       const probability = isFirstLayer
         ? 1.0
         : isTarget
-        ? Number((0.82 + rand() * 0.16).toFixed(3))
-        : Number((rand() * 0.12).toFixed(3));
+        ? Number((baseTargetProb + rand() * 0.08).toFixed(3))
+        : Number((rand() * ((1.0 - baseTargetProb) / (nodesCount - 1))).toFixed(3));
 
       const tokenId = Math.floor(rand() * 40000) + 10000;
 
@@ -183,32 +208,40 @@ export function generateLayerGraph(
 }
 
 /**
- * Calculates student score out of 20 based on completed stage scores.
- * 10 stages total, each stage up to 2.0 points.
+ * Calculates student score out of 20:
+ * - 10 stages: max 10.0 points (1.0 point each)
+ * - 4 quizzes: max 10.0 points (2.5 points each)
+ * Total: 20.0 points!
  */
-export function calculateGradeOutOf20(stageScores: Record<number, number>): {
+export function calculateGradeOutOf20(
+  stageScores: Record<number, number> = {},
+  quizScores: Record<string, number> = {}
+): {
   numericGrade: number;
   formattedGrade: string;
   rankTitle: string;
   color: string;
+  stageTotal: number;
+  quizTotal: number;
 } {
-  const sum = Object.values(stageScores).reduce((acc, curr) => acc + curr, 0);
-  const numericGrade = Math.min(20, Math.max(0, Number(sum.toFixed(1))));
+  const stageTotal = Math.min(10.0, Object.values(stageScores).reduce((acc, curr) => acc + curr, 0));
+  const quizTotal = Math.min(10.0, Object.values(quizScores).reduce((acc, curr) => acc + curr, 0));
+  const numericGrade = Math.min(20.0, Math.max(0, Number((stageTotal + quizTotal).toFixed(1))));
 
   let rankTitle = 'در حال ارزیابی';
   let color = '#00f3ff';
 
-  if (numericGrade >= 19) {
-    rankTitle = 'عالی و درخشان (نبوغ هوش مصنوعی) 🌟';
+  if (numericGrade >= 18.5) {
+    rankTitle = 'عالی و درخشان (نبوغ هوش مصنوعی) 👑';
     color = '#10b981';
-  } else if (numericGrade >= 16) {
+  } else if (numericGrade >= 15.0) {
     rankTitle = 'خیلی خوب (تسلط بالا) 👏';
     color = '#38bdf8';
-  } else if (numericGrade >= 12) {
-    rankTitle = 'قابل قبول (متوسط) 👍';
+  } else if (numericGrade >= 10.0) {
+    rankTitle = 'قابل قبول (کارآموز شبکه عصبی) 👍';
     color = '#f59e0b';
   } else if (numericGrade > 0) {
-    rankTitle = 'نیازمند تمرین و یادگیری بیشتر 📚';
+    rankTitle = 'کاشف نوپا (نیازمند تمرین بیشتر) 🌱';
     color = '#f87171';
   }
 
@@ -217,6 +250,8 @@ export function calculateGradeOutOf20(stageScores: Record<number, number>): {
     formattedGrade: numericGrade.toFixed(1),
     rankTitle,
     color,
+    stageTotal: Number(stageTotal.toFixed(1)),
+    quizTotal: Number(quizTotal.toFixed(1)),
   };
 }
 

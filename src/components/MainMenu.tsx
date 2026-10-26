@@ -21,6 +21,7 @@ import {
   ArrowLeft,
   Check,
   Award,
+  Share2,
 } from 'lucide-react';
 
 interface MainMenuProps {
@@ -52,10 +53,38 @@ export function MainMenu({
     userProfile.avatarId || AVATAR_OPTIONS[0].id
   );
   const [errorText, setErrorText] = useState('');
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
 
   const selectedAvatar =
     AVATAR_OPTIONS.find((a) => a.id === selectedAvatarId) || AVATAR_OPTIONS[0];
-  const grade = calculateGradeOutOf20(userProfile.stageScores);
+  const grade = calculateGradeOutOf20(userProfile.stageScores, userProfile.quizScores);
+
+  const handleShareGameWithFriends = async () => {
+    const shareTitle = 'سرزمین نورون‌ها: بازی سه‌بعدی آموزش هوش مصنوعی و ترنسفورمرها';
+    const shareText = `🎮 بازی جذاب «سرزمین نورون‌ها» رو امتحان کن!\nیک سفر سه‌بعدی شگفت‌انگیز به داخل شبکه عصبی هوش مصنوعی و ترنسفورمرها؛ کلمات را حدس بزن، جملات را کامل کن و نمره ۲۰ کارنامه هوش مصنوعی بگیر!\n🔗 لینک بازی: ${window.location.href}\n💬 کانال آموزش هوش مصنوعی در ایتا: ${EITAA_SUPPORT_URL}`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: window.location.href,
+        });
+        return;
+      } catch (err: unknown) {
+        if ((err as Error)?.name === 'AbortError') return;
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(`${shareText}\n${window.location.href}`);
+      setShareFeedback('متن و لینک معرفی بازی کپی شد! در ایتا یا شاد ارسال کنید ✓');
+      setTimeout(() => setShareFeedback(null), 3500);
+    } catch {
+      setShareFeedback('خطا در کپی لینک');
+      setTimeout(() => setShareFeedback(null), 2500);
+    }
+  };
 
   const handleGoToStep2 = () => {
     const trimmed = name.trim();
@@ -177,6 +206,23 @@ export function MainMenu({
                   <Play className="w-5 h-5 fill-current group-hover:scale-110 transition-transform" />
                   <span>شروع ماجراجویی هوش مصنوعی 🚀</span>
                 </button>
+              )}
+            </div>
+
+            {/* Share Game With Others Button */}
+            <div className="mb-4">
+              <button
+                onClick={handleShareGameWithFriends}
+                className="w-full py-2.5 px-4 rounded-2xl bg-gradient-to-r from-sky-500/20 via-cyan-500/20 to-emerald-500/20 hover:from-sky-500/30 hover:to-emerald-500/30 border border-cyan-400/50 text-cyan-200 hover:text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition active:scale-98 cursor-pointer shadow-md shadow-cyan-500/10"
+              >
+                <Share2 className="w-4 h-4 text-cyan-300" />
+                <span>معرفی و اشتراک‌گذاری بازی با دیگران 📲</span>
+              </button>
+
+              {shareFeedback && (
+                <div className="mt-2 p-2 rounded-xl bg-emerald-950/90 border border-emerald-400/60 text-emerald-200 text-xs text-center font-bold animate-in fade-in">
+                  {shareFeedback}
+                </div>
               )}
             </div>
 

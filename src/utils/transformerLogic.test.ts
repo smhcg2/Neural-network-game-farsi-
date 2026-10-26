@@ -27,28 +27,33 @@ test('calculateGameCameraTarget sets comfortable distance on mobile and desktop'
   const layerX = 12;
   const mobileCam = calculateGameCameraTarget(layerX, true);
   assert.equal(mobileCam.position.x, 12);
-  assert.equal(mobileCam.position.z, 32.0); // comfortably distant
+  assert.equal(mobileCam.position.y, 2.4); // elevated Y target clears top menu
+  assert.equal(mobileCam.position.z, 38.0); // comfortably distant
 
   const desktopCam = calculateGameCameraTarget(layerX, false);
   assert.equal(desktopCam.position.x, 8.0);
-  assert.equal(desktopCam.position.z, 25.0);
+  assert.equal(desktopCam.position.z, 28.0);
 });
 
 test('calculateGradeOutOf20 calculates correct educational scores and rank titles', () => {
-  // 10 stages with perfect 2.0 scores
+  // 10 stages (1.0 each) + 4 quizzes (2.5 each)
   const perfectStages: Record<number, number> = {};
-  for (let i = 0; i < 10; i++) perfectStages[i] = 2.0;
+  for (let i = 0; i < 10; i++) perfectStages[i] = 1.0;
+  const perfectQuizzes: Record<string, number> = { q1: 2.5, q2: 2.5, q3: 2.5, q4: 2.5 };
 
-  const result20 = calculateGradeOutOf20(perfectStages);
-  assert.equal(result20.numericGrade, 20);
+  const result20 = calculateGradeOutOf20(perfectStages, perfectQuizzes);
+  assert.equal(result20.numericGrade, 20.0);
   assert.equal(result20.formattedGrade, '20.0');
   assert.ok(result20.rankTitle.includes('عالی'));
 
-  // Partial score 14.5
-  const partialStages = { 0: 2, 1: 1.5, 2: 2, 3: 1, 4: 2, 5: 2, 6: 2, 7: 2 };
-  const result14 = calculateGradeOutOf20(partialStages);
-  assert.equal(result14.numericGrade, 14.5);
-  assert.ok(result14.rankTitle.includes('قابل قبول'));
+  // Partial score: 7.0 from stages + 5.0 from quizzes = 12.0
+  const partialStages = { 0: 1, 1: 0.8, 2: 1, 3: 0.7, 4: 1, 5: 1, 6: 0.5, 7: 1 };
+  const partialQuizzes = { q1: 2.5, q2: 2.5 };
+  const result12 = calculateGradeOutOf20(partialStages, partialQuizzes);
+  assert.equal(result12.stageTotal, 7.0);
+  assert.equal(result12.quizTotal, 5.0);
+  assert.equal(result12.numericGrade, 12.0);
+  assert.ok(result12.rankTitle.includes('قابل قبول'));
 });
 
 test('generateSmartHintForStrugglingPlayer gives constructive guidance', () => {
@@ -82,12 +87,23 @@ test('evaluateInGameGuess awards points and calculates streaks', () => {
   assert.equal(wrong.pointsEarned, 0);
 });
 
-test('generateLayerGraph creates exactly 1 prompt neuron in layer 0 and 4 in subsequent layers', () => {
+test('generateLayerGraph scales options progressively from 2 to 5 nodes per layer', () => {
   const tokens = ['هر', 'شب', 'تاریکی'];
-  const graph = generateLayerGraph(tokens, ['امید', 'تلاش', 'صبر'], 0);
-  assert.equal(graph.layers[0].length, 1);
-  assert.equal(graph.layers[0][0].word, 'هر');
-  assert.equal(graph.layers[0][0].isTarget, true);
-  assert.equal(graph.layers[1].length, 4);
-  assert.equal(graph.layers[2].length, 4);
+  // Stage 0 (Stage 1): 2 options
+  const graphStage0 = generateLayerGraph(tokens, ['امید', 'تلاش', 'صبر', 'نور', 'شادی'], 0);
+  assert.equal(graphStage0.layers[0].length, 1); // Layer 0 is single prompt
+  assert.equal(graphStage0.layers[1].length, 2); // 2 options for beginner stage 1
+  assert.equal(graphStage0.layers[2].length, 2);
+
+  // Stage 2 (Stage 3): 3 options
+  const graphStage2 = generateLayerGraph(tokens, ['امید', 'تلاش', 'صبر', 'نور', 'شادی'], 2);
+  assert.equal(graphStage2.layers[1].length, 3);
+
+  // Stage 5 (Stage 6): 4 options
+  const graphStage5 = generateLayerGraph(tokens, ['امید', 'تلاش', 'صبر', 'نور', 'شادی'], 5);
+  assert.equal(graphStage5.layers[1].length, 4);
+
+  // Stage 8 (Stage 9): 5 options
+  const graphStage8 = generateLayerGraph(tokens, ['امید', 'تلاش', 'صبر', 'نور', 'شادی'], 8);
+  assert.equal(graphStage8.layers[1].length, 5);
 });

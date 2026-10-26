@@ -71,9 +71,11 @@ export function NeuralNetworkCanvas({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
 
   const attemptsOnLayerRef = useRef(0);
+  const isTransitioningRef = useRef(false);
 
   useEffect(() => {
     attemptsOnLayerRef.current = 0;
+    isTransitioningRef.current = false;
     // When moving to new layer, smoothly realign camera back to track
     isUserControlledRef.current = false;
     onCameraIsCustomizedRef.current?.(false);
@@ -84,8 +86,15 @@ export function NeuralNetworkCanvas({
     if (resetCameraTrigger !== undefined) {
       isUserControlledRef.current = false;
       onCameraIsCustomizedRef.current?.(false);
+      const activeLayerIdx = currentStepRef.current;
+      const activeTargetNode = graph.targetPath[activeLayerIdx] || graph.targetPath[0];
+      if (activeTargetNode && controlsRef.current) {
+        const isMob = window.innerWidth < 768;
+        const target = calculateGameCameraTarget(activeTargetNode.posX, isMob);
+        controlsRef.current.target.set(target.lookAt.x, target.lookAt.y, target.lookAt.z);
+      }
     }
-  }, [resetCameraTrigger]);
+  }, [resetCameraTrigger, graph.targetPath]);
 
   useEffect(() => {
     const container = mountRef.current;
@@ -99,8 +108,8 @@ export function NeuralNetworkCanvas({
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x030712, 0.007);
 
-    // 2. Camera setup: wider FOV on mobile so all 4 vertical nodes fit comfortably
-    const camera = new THREE.PerspectiveCamera(isMobile ? 62 : 52, width / height, 0.1, 1000);
+    // 2. Camera setup: comfortable FOV on mobile so all vertical nodes fit safely below top menu
+    const camera = new THREE.PerspectiveCamera(isMobile ? 64 : 52, width / height, 0.1, 1000);
     const startX = graph.targetPath[0]?.posX || 0;
     const initCam = calculateGameCameraTarget(startX, isMobile);
     camera.position.set(initCam.position.x, initCam.position.y, initCam.position.z);
@@ -467,6 +476,7 @@ export function NeuralNetworkCanvas({
 
     const onPointerUp = (e: PointerEvent) => {
       if (!isClickAction) return;
+      if (isTransitioningRef.current) return; // Lockout to prevent multiple clicks leaking next words!
 
       const rect = container.getBoundingClientRect();
       mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -498,6 +508,7 @@ export function NeuralNetworkCanvas({
       ) as THREE.Sprite | undefined;
 
       if (result.isCorrect) {
+        isTransitioningRef.current = true; // Immediately lock further taps!
         spawnCelebrationBurst(tappedMesh.position);
         spawnFloatingScoreText(tappedMesh.position, `+${result.pointsEarned} XP ⭐`, '#34d399');
 
@@ -578,7 +589,7 @@ export function NeuralNetworkCanvas({
       const h = container.clientHeight || window.innerHeight;
       const isMob = window.innerWidth < 768;
       camera.aspect = w / h;
-      camera.fov = isMob ? 62 : 52;
+      camera.fov = isMob ? 64 : 52;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };

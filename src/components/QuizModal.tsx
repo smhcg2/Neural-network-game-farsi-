@@ -6,7 +6,7 @@ import { Sparkles, CheckCircle2, XCircle, ArrowLeft, Trophy, BookOpen } from 'lu
 interface QuizModalProps {
   quiz: QuizQuestion;
   isOpen: boolean;
-  onComplete: (earnedXp: number) => void;
+  onComplete: (earnedXp: number, earnedGradeScore: number, quizId: string) => void;
 }
 
 export function QuizModal({ quiz, isOpen, onComplete }: QuizModalProps) {
@@ -29,15 +29,17 @@ export function QuizModal({ quiz, isOpen, onComplete }: QuizModalProps) {
 
   const handleProceed = () => {
     const isCorrect = selectedIndex === quiz.correctIndex;
-    const earned = isCorrect ? quiz.rewardXp : Math.floor(quiz.rewardXp * 0.4);
-    onComplete(earned);
+    const earnedXp = isCorrect ? quiz.rewardXp : Math.floor(quiz.rewardXp * 0.4);
+    // 2.5 points for correct answer towards total 20 score (4 quizzes x 2.5 = 10 points)
+    const earnedGradeScore = isCorrect ? 2.5 : 0.8;
+    onComplete(earnedXp, earnedGradeScore, quiz.id);
   };
 
   const isCorrect = selectedIndex === quiz.correctIndex;
 
   return (
     <div className="fixed inset-0 z-50 bg-[#030712]/90 backdrop-blur-xl flex items-center justify-center p-3 sm:p-6 overflow-y-auto select-none animate-in fade-in duration-200">
-      <div className="hud-panel w-full max-w-lg p-5 sm:p-7 rounded-3xl relative shadow-2xl border-2 border-cyan-400/50 bg-slate-950/90 text-right space-y-4">
+      <div className="hud-panel w-full max-w-lg p-5 sm:p-7 rounded-3xl relative shadow-2xl border-2 border-cyan-400/50 bg-slate-950/90 text-right space-y-4 my-auto">
         <div className="hud-corner-tl" />
         <div className="hud-corner-tr" />
         <div className="hud-corner-bl" />
@@ -50,23 +52,26 @@ export function QuizModal({ quiz, isOpen, onComplete }: QuizModalProps) {
               <BookOpen className="w-4 h-4 text-cyan-400" />
             </span>
             <span className="text-xs sm:text-sm font-bold text-cyan-300">
-              آزمون دانش شبکه عصبی (بین مراحل)
+              آزمون دانش هوش مصنوعی (نمره آزمون: ۲.۵ از ۲۰)
             </span>
           </div>
           <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono text-xs font-bold flex items-center gap-1">
             <Trophy className="w-3.5 h-3.5 text-amber-400" />
-            <span>+{quiz.rewardXp} XP</span>
+            <span>+۲.۵ نمره | +{quiz.rewardXp} XP</span>
           </span>
         </div>
 
         {/* Question Title & Prompt */}
         <div className="space-y-1.5">
-          <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-1.5">
-            <Sparkles className="w-5 h-5 text-amber-400 shrink-0" />
+          <div className="text-[11px] text-cyan-400 font-mono font-bold">
+            دسته: {quiz.category}
+          </div>
+          <h3 className="text-base sm:text-lg font-black text-white flex items-start gap-2">
+            <Sparkles className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
             <span>{quiz.question}</span>
           </h3>
           <p className="text-xs text-gray-400">
-            بر اساس مفاهیم آموزشی که در مراحل قبل دیدی، بهترین پاسخ را انتخاب کن:
+            بر اساس مفاهیم آموزشی که در مراحل بازی دیدی، بهترین گزینه را انتخاب کن:
           </p>
         </div>
 
@@ -112,7 +117,7 @@ export function QuizModal({ quiz, isOpen, onComplete }: QuizModalProps) {
           })}
         </div>
 
-        {/* Feedback & Explanation Card */}
+        {/* Feedback & Educational Explanation Card */}
         {hasAnswered && (
           <div
             className={`p-3.5 rounded-2xl border text-xs leading-relaxed animate-in slide-in-from-top-2 duration-300 ${
@@ -125,12 +130,12 @@ export function QuizModal({ quiz, isOpen, onComplete }: QuizModalProps) {
               {isCorrect ? (
                 <>
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>آفرین! پاسخ کاملاً صحیح است (+{quiz.rewardXp} XP)</span>
+                  <span>آفرین! پاسخ کاملاً صحیح است (+۲.۵ نمره کارنامه و +{quiz.rewardXp} XP)</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4 text-amber-400" />
-                  <span>آموزش شبکه: پاسخ صحیح گزینه {quiz.correctIndex + 1} بود (+{Math.floor(quiz.rewardXp * 0.4)} XP)</span>
+                  <span>آموزش شبکه: پاسخ صحیح گزینه {quiz.correctIndex + 1} بود (+۰.۸ نمره تلاش)</span>
                 </>
               )}
             </div>
@@ -145,7 +150,7 @@ export function QuizModal({ quiz, isOpen, onComplete }: QuizModalProps) {
               onClick={handleProceed}
               className="w-full py-3.5 px-5 rounded-2xl bg-gradient-to-r from-cyan-400 to-emerald-400 hover:from-cyan-300 hover:to-emerald-300 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-cyan-500/30 flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer"
             >
-              <span>ادامه مسیر و ورود به مرحله بعد</span>
+              <span>ادامه مسیر و ورود به مرحله بعدی</span>
               <ArrowLeft className="w-4 h-4" />
             </button>
           </div>

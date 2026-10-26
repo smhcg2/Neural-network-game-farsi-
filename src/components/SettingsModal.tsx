@@ -15,6 +15,7 @@ import {
   Volume2,
   VolumeX,
   Smartphone,
+  Download,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -253,6 +254,22 @@ export function SettingsModal({
                 />
               </button>
             </div>
+          </div>
+
+          {/* Download Game Package Card */}
+          <div className="bg-emerald-950/40 p-3 rounded-2xl border border-emerald-500/40 flex items-center justify-between">
+            <div>
+              <span className="font-bold text-emerald-300 block text-xs">دانلود بسته آماده بازی (ZIP):</span>
+              <span className="text-[11px] text-gray-300">برای انتشار در هاست‌های رایگان یا اجرای آفلاین</span>
+            </div>
+            <a
+              href="/neuroland_game_ready.zip"
+              download="neuroland_game_ready.zip"
+              className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-1.5 transition active:scale-95 shadow-md shadow-emerald-500/20"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>دانلود فایل</span>
+            </a>
           </div>
 
           {/* Eitaa Support Button */}

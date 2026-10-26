@@ -114,10 +114,10 @@ export function InGameHUD({
       : null;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-20 flex flex-col justify-between p-2 sm:p-4 select-none">
+    <div className="pointer-events-none absolute inset-0 z-20 flex flex-col justify-between p-1.5 sm:p-4 select-none">
       {/* TOP FLOATING DASHBOARD */}
-      <div className="pointer-events-auto flex flex-col gap-1.5 sm:gap-2 max-w-2xl mx-auto w-full">
-        <div className="hud-panel p-2 sm:p-2.5 rounded-2xl relative shadow-2xl border border-cyan-400/40">
+      <div className="pointer-events-auto flex flex-col gap-1 max-w-2xl mx-auto w-full">
+        <div className="hud-panel p-1.5 sm:p-2.5 rounded-2xl relative shadow-2xl border border-cyan-400/40">
           <div className="hud-corner-tl" />
           <div className="hud-corner-tr" />
           <div className="hud-corner-bl" />
@@ -296,7 +296,7 @@ export function InGameHUD({
         ) : (
           <div className="bg-slate-950/70 backdrop-blur-md p-1.5 rounded-xl border border-cyan-500/30 text-[11px] text-cyan-200 text-center font-semibold shadow-lg flex items-center justify-center gap-1.5">
             <span className="text-amber-400">🎯 چالش هوش مصنوعی:</span>
-            <span>یکی از ۴ نورون شناور را مستقیماً روی نمودار سه‌بعدی لمس کن!</span>
+            <span>نورون صحیح با بالاترین درصد احتمال را روی نمودار لمس کن!</span>
           </div>
         )}
       </div>

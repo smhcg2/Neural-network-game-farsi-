@@ -12,7 +12,8 @@ import {
   INITIAL_MEDALS,
   getRandomSentenceForStage,
   STAGE_THEMES,
-  TUTORIAL_QUIZZES,
+  QUIZ_CHECKPOINT_STAGES,
+  getQuizForCheckpoint,
   QuizQuestion,
 } from './utils/constants.ts';
 import {
@@ -30,6 +31,7 @@ import { TutorialModal } from './components/TutorialModal.tsx';
 import { SettingsModal } from './components/SettingsModal.tsx';
 import { ShareCardModal } from './components/ShareCardModal.tsx';
 import { QuizModal } from './components/QuizModal.tsx';
+import { StageOneInteractiveGuide } from './components/StageOneInteractiveGuide.tsx';
 
 const STORAGE_KEY = 'neuroland_user_profile_v3';
 
@@ -39,8 +41,11 @@ const DEFAULT_PROFILE: UserProfile = {
   scoreOutOf20: 0,
   completedStages: [],
   stageScores: {},
+  quizScores: {},
   highestStreak: 0,
   unlockedMedalIds: [],
+  tutorialShownCount: 0,
+  tutorialDismissed: false,
 };
 
 export default function App() {
@@ -99,7 +104,11 @@ export default function App() {
   const [highlightHintNodeId, setHighlightHintNodeId] = useState<string | null>(null);
   const [strugglingAttempts, setStrugglingAttempts] = useState<number>(0);
 
-  // Track attempts on current stage to calculate 0 to 2.0 stage score
+  // Guards against multi-tap race condition
+  const isAdvancingRef = useRef<boolean>(false);
+  const hasTrackedTutorialRef = useRef<number>(-1);
+
+  // Track attempts on current stage to calculate 0 to 1.0 stage score
   const stageAttemptsRef = useRef<{ total: number; mistakes: number }>({ total: 0, mistakes: 0 });
   const feedbackTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -119,15 +128,47 @@ export default function App() {
     return generateLayerGraph(tokens, DISTRACTOR_WORDS, currentSentenceIdx, 100 + currentSentenceIdx);
   }, [tokens, currentSentenceIdx]);
 
+  // For Stage 1 (Interactive Beginner Tutorial), automatically illuminate the target node with hint glow
+  const activeHighlightNodeId = useMemo(() => {
+    if (currentSentenceIdx === 0 && currentStepIndex < graph.totalLayers) {
+      return graph.targetPath[currentStepIndex]?.id || null;
+    }
+    return highlightHintNodeId;
+  }, [currentSentenceIdx, currentStepIndex, graph.targetPath, graph.totalLayers, highlightHintNodeId]);
+
   // Reset to step 1 when sentence index changes
   useEffect(() => {
     setCurrentStepIndex(1);
+    isAdvancingRef.current = false;
     setFeedbackText(null);
     setHighlightHintNodeId(null);
     setStrugglingAttempts(0);
     setTimeRemaining(getInitialTimeForStage(currentSentenceIdx));
     stageAttemptsRef.current = { total: 0, mistakes: 0 };
   }, [currentSentenceIdx, getInitialTimeForStage]);
+
+  // Unlock advancing lock once currentStepIndex changes
+  useEffect(() => {
+    isAdvancingRef.current = false;
+  }, [currentStepIndex]);
+
+  // Track stage 1 tutorial shown count (only increment up to 2 times)
+  useEffect(() => {
+    if (!isMenuOpen && currentSentenceIdx === 0 && !userProfile.tutorialDismissed) {
+      if (hasTrackedTutorialRef.current !== 0) {
+        hasTrackedTutorialRef.current = 0;
+        const currentCount = userProfile.tutorialShownCount || 0;
+        if (currentCount < 2) {
+          setUserProfile((prev) => ({
+            ...prev,
+            tutorialShownCount: currentCount + 1,
+          }));
+        }
+      }
+    } else if (currentSentenceIdx !== 0) {
+      hasTrackedTutorialRef.current = currentSentenceIdx;
+    }
+  }, [isMenuOpen, currentSentenceIdx, userProfile.tutorialDismissed, userProfile.tutorialShownCount]);
 
   // Show temporary feedback toast in 3D scene
   const triggerFeedback = useCallback((text: string, type: 'success' | 'warning') => {
@@ -142,7 +183,12 @@ export default function App() {
 
   // Medal unlocking checker
   const checkMedals = useCallback(
-    (newStreak: number, completedStages: number[], stageScores: Record<number, number>) => {
+    (
+      newStreak: number,
+      completedStages: number[],
+      stageScores: Record<number, number>,
+      quizScores?: Record<string, number>
+    ) => {
       setUserProfile((prev) => {
         const unlocked = new Set(prev.unlockedMedalIds || []);
 
@@ -163,7 +209,7 @@ export default function App() {
           unlocked.add('combo_king');
         }
         // 5. Perfect 20/20 score
-        const grade = calculateGradeOutOf20(stageScores);
+        const grade = calculateGradeOutOf20(stageScores, quizScores || prev.quizScores);
         if (grade.numericGrade >= 20.0) {
           unlocked.add('genius_score');
         }
@@ -182,10 +228,11 @@ export default function App() {
   );
 
   // Helper to record stage completion and grade out of 20
+  // Each stage awards max 1.0 point (10 stages = 10.0 points)
   const completeCurrentStage = useCallback(
     (stageIdx: number) => {
       const mistakes = stageAttemptsRef.current.mistakes;
-      const stageScore = Math.max(0.5, Number((2.0 - mistakes * 0.3).toFixed(1)));
+      const stageScore = Math.max(0.3, Number((1.0 - mistakes * 0.15).toFixed(1)));
 
       setUserProfile((prevProfile) => {
         const updatedCompleted = Array.from(new Set([...prevProfile.completedStages, stageIdx]));
@@ -193,8 +240,8 @@ export default function App() {
           ...prevProfile.stageScores,
           [stageIdx]: Math.max(prevProfile.stageScores[stageIdx] || 0, stageScore),
         };
-        const totalGrade = calculateGradeOutOf20(updatedStageScores);
-        checkMedals(streak, updatedCompleted, updatedStageScores);
+        const totalGrade = calculateGradeOutOf20(updatedStageScores, prevProfile.quizScores);
+        checkMedals(streak, updatedCompleted, updatedStageScores, prevProfile.quizScores);
 
         return {
           ...prevProfile,
@@ -212,6 +259,14 @@ export default function App() {
     if (currentStepIndex >= graph.totalLayers && graph.totalLayers > 0) {
       soundManager.playVictory();
       completeCurrentStage(currentSentenceIdx);
+
+      // If completing final stage (stage 10, index 9), automatically open ShareCardModal
+      if (currentSentenceIdx === 9) {
+        const timer = setTimeout(() => {
+          setIsShareCardOpen(true);
+        }, 1200);
+        return () => clearTimeout(timer);
+      }
     }
   }, [currentStepIndex, graph.totalLayers, currentSentenceIdx, completeCurrentStage]);
 
@@ -281,7 +336,12 @@ export default function App() {
         triggerFeedback(result.feedbackText, 'success');
 
         // Check streak medals
-        checkMedals(result.newStreak, userProfile.completedStages, userProfile.stageScores);
+        checkMedals(
+          result.newStreak,
+          userProfile.completedStages,
+          userProfile.stageScores,
+          userProfile.quizScores
+        );
       } else {
         soundManager.playWrong();
         stageAttemptsRef.current.mistakes += 1;
@@ -311,11 +371,15 @@ export default function App() {
       checkMedals,
       userProfile.completedStages,
       userProfile.stageScores,
+      userProfile.quizScores,
     ]
   );
 
-  // Advance to next layer (called automatically after correct guess)
+  // Advance to next layer (called automatically after correct guess with double-click guard)
   const handleAdvanceToNextLayer = useCallback(() => {
+    if (isAdvancingRef.current) return;
+    isAdvancingRef.current = true;
+
     setCurrentStepIndex((prev) => {
       const next = prev + 1;
       if (next >= graph.totalLayers) {
@@ -335,32 +399,68 @@ export default function App() {
     triggerFeedback('🎉 مرحله جدید آغاز شد! آماده انتخاب توکن بعدی شو', 'success');
   }, [triggerFeedback]);
 
-  // Next stage (with tutorial checkpoint quizzes every 3 stages)
+  // Next stage (with 4 educational quiz checkpoints throughout the 10 stages)
   const handleNextStage = useCallback(() => {
     completeCurrentStage(currentSentenceIdx);
     setScore((prev) => prev + 250);
 
-    // Check if checkpoint quiz exists for this stage (after stage 3, 6, 9)
-    const quiz = TUTORIAL_QUIZZES[currentSentenceIdx];
-    if (quiz) {
+    // 4 Quiz checkpoints: after stages 2, 4, 7, 9 (indices 1, 3, 6, 8)
+    if (QUIZ_CHECKPOINT_STAGES.includes(currentSentenceIdx)) {
+      const answeredIds = Object.keys(userProfile.quizScores || {});
+      const quiz = getQuizForCheckpoint(answeredIds);
       setActiveQuiz(quiz);
+    } else if (currentSentenceIdx === 9) {
+      // Stage 10 completed! Show final 3:4 certificate report card
+      setIsShareCardOpen(true);
     } else {
       const nextStage = (currentSentenceIdx + 1) % 10;
       proceedToStage(nextStage);
     }
-  }, [completeCurrentStage, currentSentenceIdx, proceedToStage]);
+  }, [completeCurrentStage, currentSentenceIdx, proceedToStage, userProfile.quizScores]);
 
-  // When player completes the 4-choice checkpoint quiz
-  const handleQuizComplete = useCallback((earnedXp: number) => {
-    setScore((prev) => prev + earnedXp);
-    setActiveQuiz(null);
-    const nextStage = (currentSentenceIdx + 1) % 10;
-    proceedToStage(nextStage);
-  }, [currentSentenceIdx, proceedToStage]);
+  // When player completes the 4-choice checkpoint quiz (awards 2.5 points towards score)
+  const handleQuizComplete = useCallback(
+    (earnedXp: number, earnedGradeScore: number, quizId: string) => {
+      setScore((prev) => prev + earnedXp);
+      setUserProfile((prev) => {
+        const updatedQuizScores = {
+          ...(prev.quizScores || {}),
+          [quizId]: earnedGradeScore,
+        };
+        const totalGrade = calculateGradeOutOf20(prev.stageScores, updatedQuizScores);
+        checkMedals(streak, prev.completedStages, prev.stageScores, updatedQuizScores);
+
+        return {
+          ...prev,
+          quizScores: updatedQuizScores,
+          scoreOutOf20: totalGrade.numericGrade,
+        };
+      });
+      setActiveQuiz(null);
+
+      if (currentSentenceIdx === 9) {
+        setIsShareCardOpen(true);
+      } else {
+        const nextStage = (currentSentenceIdx + 1) % 10;
+        proceedToStage(nextStage);
+      }
+    },
+    [currentSentenceIdx, proceedToStage, checkMedals, streak]
+  );
+
+  // Skip tutorial permanently
+  const handleSkipTutorial = useCallback(() => {
+    setUserProfile((prev) => ({
+      ...prev,
+      tutorialDismissed: true,
+    }));
+    triggerFeedback('آموزش تعاملی رد شد. می‌توانید آزادانه کلمات را لمس کنید!', 'success');
+  }, [triggerFeedback]);
 
   // Reset stage
   const handleResetStage = useCallback(() => {
     setCurrentStepIndex(1); // Reset to layer 1 (layer 0 is prompt)
+    isAdvancingRef.current = false;
     setStrugglingAttempts(0);
     setHighlightHintNodeId(null);
     setTimeRemaining(getInitialTimeForStage(currentSentenceIdx));
@@ -426,6 +526,23 @@ export default function App() {
     setTimeRemaining(getInitialTimeForStage(targetIdx));
   }, [userProfile.completedStages, getInitialTimeForStage]);
 
+  // Play again handler (from ShareCardModal)
+  const handlePlayAgain = useCallback(() => {
+    setIsShareCardOpen(false);
+    setCurrentSentenceIdx(0);
+    setCurrentSentence(getRandomSentenceForStage(0));
+    setTheme(STAGE_THEMES[0] || THEMES[0]);
+    setCurrentStepIndex(1);
+    setStreak(0);
+    triggerFeedback('🎮 بازی مجدداً از مرحله ۱ آغاز شد! موفق باشی', 'success');
+  }, [triggerFeedback]);
+
+  // Go to main menu handler (from ShareCardModal)
+  const handleGoHome = useCallback(() => {
+    setIsShareCardOpen(false);
+    setIsMenuOpen(true);
+  }, []);
+
   // Update profile from settings
   const handleUpdateProfile = useCallback((name: string, avatarId: string) => {
     setUserProfile((prev) => ({ ...prev, name, avatarId }));
@@ -439,8 +556,11 @@ export default function App() {
       scoreOutOf20: 0,
       completedStages: [],
       stageScores: {},
+      quizScores: {},
       highestStreak: 0,
       unlockedMedalIds: [],
+      tutorialShownCount: 0,
+      tutorialDismissed: false,
     };
     setUserProfile(freshProfile);
     setScore(0);
@@ -480,6 +600,13 @@ export default function App() {
 
   const hasSavedGame = Boolean(userProfile.name && userProfile.completedStages.length > 0);
 
+  // Tutorial condition: only first 2 times and unless dismissed
+  const shouldShowStageOneTutorial =
+    !isMenuOpen &&
+    currentSentenceIdx === 0 &&
+    (userProfile.tutorialShownCount ?? 0) <= 2 &&
+    !userProfile.tutorialDismissed;
+
   return (
     <div
       className="relative w-screen h-screen overflow-hidden bg-[#030712] select-none text-gray-100 font-sans"
@@ -495,7 +622,7 @@ export default function App() {
         noiseIntensity={noiseIntensity}
         streak={streak}
         resetCameraTrigger={resetCameraTrigger}
-        highlightHintNodeId={highlightHintNodeId}
+        highlightHintNodeId={activeHighlightNodeId}
         onCameraIsCustomized={setIsCameraCustomized}
         onGuessResult={handleGuessResult}
         onAdvanceToNextLayer={handleAdvanceToNextLayer}
@@ -531,6 +658,17 @@ export default function App() {
         />
       )}
 
+      {/* Stage 1 Interactive Beginner Step-by-Step Tutorial Guide (Max 2 times + Skip button) */}
+      {shouldShowStageOneTutorial && (
+        <StageOneInteractiveGuide
+          graph={graph}
+          currentStepIndex={currentStepIndex}
+          isStageCompleted={currentStepIndex >= graph.totalLayers}
+          onNextStage={handleNextStage}
+          onSkipTutorial={handleSkipTutorial}
+        />
+      )}
+
       {/* Main Menu Modal / Landing Screen */}
       {isMenuOpen && (
         <MainMenu
@@ -560,14 +698,16 @@ export default function App() {
         onResetProgress={handleResetProgress}
       />
 
-      {/* Shareable 0-20 Report Card & Medals Modal */}
+      {/* Shareable 0-20 Report Card & Medals Modal (3:4 Aspect Ratio Image) */}
       <ShareCardModal
         isOpen={isShareCardOpen}
         onClose={() => setIsShareCardOpen(false)}
         userProfile={userProfile}
+        onPlayAgain={handlePlayAgain}
+        onGoHome={handleGoHome}
       />
 
-      {/* Checkpoint Quiz Modal (Between stages: after stages 3, 6, 9) */}
+      {/* Checkpoint Quiz Modal (Between stages: after stages 2, 4, 7, 9) */}
       {activeQuiz && (
         <QuizModal
           quiz={activeQuiz}
